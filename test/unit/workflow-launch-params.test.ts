@@ -3,6 +3,19 @@ import { describe, it } from "node:test";
 import { prepareWorkflowLaunchParams, promptAuditRedoParams, sanitizeRunPathSegment } from "../../src/runs/foreground/subagent-executor.ts";
 
 describe("workflow launch params", () => {
+	it("does not leak workflow capacity overrides into child launch defaults", () => {
+		const child = prepareWorkflowLaunchParams(
+			{ globalConcurrencyLimit: 3, maxSubagentSpawnsPerRun: 9 },
+			{ agent: "worker", task: "Run", globalConcurrencyLimit: 1, maxSubagentSpawnsPerRun: 2 },
+			"workflow-run",
+			"run",
+		);
+		assert.equal(child.globalConcurrencyLimit, undefined);
+		assert.equal(child.maxSubagentSpawnsPerRun, undefined);
+		assert.equal(child.agent, "worker");
+		assert.equal(child.task, "Run");
+	});
+
 	it("keeps omitted workflow child async foreground", () => {
 		assert.deepEqual(
 			prepareWorkflowLaunchParams(

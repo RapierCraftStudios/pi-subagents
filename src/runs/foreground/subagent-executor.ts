@@ -23,7 +23,7 @@ import { handleManagementAction } from "../../agents/agent-management.ts";
 import { handleRefinementAction } from "../../agents/agent-refinements.ts";
 import { buildDoctorReport } from "../../extension/doctor.ts";
 import { readSubagentGuide } from "../../extension/subagent-guide.ts";
-import { normalizePublicSubagentExecution } from "../../extension/public-execution.ts";
+import { normalizePublicSubagentExecution, validateWorkflowCapacityOverrides } from "../../extension/public-execution.ts";
 import { runSync } from "./execution.ts";
 import { handleWatchdogToolAction, WATCHDOG_TOOL_ACTIONS } from "../../watchdog/tool-actions.ts";
 import type { MainWatchdogRuntime } from "../../watchdog/runtime.ts";
@@ -320,6 +320,10 @@ export interface SubagentParamsLike {
 	planId?: string;
 	workflowScript?: string;
 	workflowScriptPath?: string;
+	/** WorkflowScript-only cap on simultaneously running children. */
+	globalConcurrencyLimit?: number;
+	/** WorkflowScript-only cumulative child cap for this run tree. */
+	maxSubagentSpawnsPerRun?: number;
 	preflight?: import("../../shared/types.ts").WorkflowPreflightV1;
 	chatProgress?: "auto" | "off" | "live-card";
 	isolation?: "none" | "worktree";
@@ -4372,6 +4376,10 @@ export function prepareWorkflowLaunchParams(
 	workflowKey: string,
 	options: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean; awaitDetachedChild?: boolean; runFanoutBudget?: RunFanoutBudgetDescriptor; parentDeadlineAt?: number; externalAsyncRequired?: boolean; capabilityCeiling?: ResolvedSubagentCapabilityCeiling; outputClaimPath?: string } = {},
 ): SubagentParamsLike {
+	const { globalConcurrencyLimit: _workflowGlobalConcurrencyLimit, maxSubagentSpawnsPerRun: _workflowMaxSubagentSpawnsPerRun, ...workflowDefaultsWithoutCapacity } = workflowDefaults;
+	const { globalConcurrencyLimit: _childGlobalConcurrencyLimit, maxSubagentSpawnsPerRun: _childMaxSubagentSpawnsPerRun, ...childParamsWithoutCapacity } = childParams;
+	workflowDefaults = workflowDefaultsWithoutCapacity;
+	childParams = childParamsWithoutCapacity;
 	const capabilityCeiling = intersectSubagentCapabilityCeilings(workflowDefaults.capabilityCeiling, options.capabilityCeiling);
 	const lane = normalizeWorkflowLaneMetadata(Object.hasOwn(childParams, "lane") ? childParams.lane : workflowDefaults.lane, `workflow child '${workflowKey}'.lane`);
 	assertWorkflowLaneKey(lane, workflowKey, `workflow child '${workflowKey}'.lane`);
@@ -4674,6 +4682,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		let requestParams = normalizedGate.params;
 		let workflowPreflight: import("../../shared/types.ts").WorkflowPreflightV1 | undefined;
 		try {
+			const capacityError = validateWorkflowCapacityOverrides(requestParams);
+			if (capacityError) throw new Error(capacityError);
 			if (requestParams.preflight !== undefined && requestParams.workflowScript === undefined && requestParams.workflowScriptPath === undefined) {
 				throw new Error("preflight requires workflowScript or workflowScriptPath.");
 			}
@@ -4789,7 +4799,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			try {
 				workflowFanoutBudget = requestParams.runFanoutBudget
 					?? decodeRunFanoutBudgetDescriptor(process.env[RUN_FANOUT_BUDGET_ENV])
-					?? createRunFanoutBudget(_id, resolveMaxSubagentSpawnsPerRun(deps.config.maxSubagentSpawnsPerRun));
+					?? createRunFanoutBudget(_id, requestParams.maxSubagentSpawnsPerRun ?? resolveMaxSubagentSpawnsPerRun(deps.config.maxSubagentSpawnsPerRun));
 			} catch (error) {
 				workflowCapacity?.rollback();
 				return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "workflow", results: [] } };
@@ -5019,7 +5029,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					const workflowDeadlineAt = timeout === undefined ? undefined : Date.now() + timeout;
 					const workflowResults: SingleResult[] = [];
 					const workflowChildRunIds = new Map<string, string>();
-					const { action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, missionId: _missionId, mission: _mission, preflight: _preflight, ...workflowChildDefaults } = workflowRequest;
+					const { action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, missionId: _missionId, mission: _mission, preflight: _preflight, globalConcurrencyLimit: _globalConcurrencyLimit, maxSubagentSpawnsPerRun: _maxSubagentSpawnsPerRun, ...workflowChildDefaults } = workflowRequest;
 					const workflowOutput = typeof workflowChildDefaults.output === "string" || typeof workflowChildDefaults.output === "boolean" ? workflowChildDefaults.output : undefined;
 					const configuredOutputBaseDir = resolveConfiguredSingleRunOutputBaseDir(deps);
 					const workflowAggregateOutputPath = resolveWorkflowAggregateOutputPath(workflowOutput, parentCwd, workflowCwd, resolveSingleRunOutputBaseDir(deps, workflowArtifactsDir, workflowRunId));
@@ -5144,7 +5154,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					try {
 						const workflow = await runWorkflowScript({
 							script: workflowScript,
-							globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
+							globalConcurrencyLimit: requestParams.globalConcurrencyLimit ?? deps.config.globalConcurrencyLimit,
 							timeoutMs: timeout,
 							signal: controller.signal,
 							registerStopChild: (stop) => {
@@ -5355,7 +5365,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					details: { mode: "workflow", runId: workflowRunId, toolCallId, asyncId: workflowRunId, asyncDir, results: [], ...(workflowPreflight ? { preflight: workflowPreflight } : {}), workflow: status.workflow, workflowChildren: status.workflowChildren, chatProgress, ...(deps.state.activeAsyncCapacity ? { activeAsyncCapacity: deps.state.activeAsyncCapacity } : {}) },
 				}, workflowFanoutBudget));
 			}
-			const { workflowScript: _workflowScript, action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, async: _async, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, chatProgress: _chatProgress, missionId: _missionId, mission: _mission, preflight: _preflight, ...workflowChildDefaults } = requestParams;
+			const { workflowScript: _workflowScript, action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, async: _async, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, chatProgress: _chatProgress, missionId: _missionId, mission: _mission, preflight: _preflight, globalConcurrencyLimit: _globalConcurrencyLimit, maxSubagentSpawnsPerRun: _maxSubagentSpawnsPerRun, ...workflowChildDefaults } = requestParams;
 			const workflowOutput = typeof workflowChildDefaults.output === "string" || typeof workflowChildDefaults.output === "boolean" ? workflowChildDefaults.output : undefined;
 			const configuredOutputBaseDir = resolveConfiguredSingleRunOutputBaseDir(deps);
 			const workflowAggregateOutputPath = resolveWorkflowAggregateOutputPath(workflowOutput, ctx.cwd, workflowCwd, resolveSingleRunOutputBaseDir(deps, workflowArtifactsDir, _id));
@@ -5391,7 +5401,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const workflow = await runWorkflowScript({
 					script: requestParams.workflowScript,
 					...(delegatedWorkflowPermit ? { oneUsePermit: { claim: (key: string) => claimWorkflowChildPermit(delegatedWorkflowPermit, _id, key) } } : {}),
-					globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
+					globalConcurrencyLimit: requestParams.globalConcurrencyLimit ?? deps.config.globalConcurrencyLimit,
 					timeoutMs: timeout,
 					signal,
 					...(workflowState ? { state: workflowState } : {}),

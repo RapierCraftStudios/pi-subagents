@@ -4,7 +4,10 @@ import { normalizePublicSubagentExecution } from "../../src/extension/public-exe
 
 describe("public subagent execution normalization", () => {
 	it("accepts structured single-child, workflow, management, and schedules", () => {
-		assert.deepEqual(normalizePublicSubagentExecution({ workflowScript: "return 1" }), { ok: true, params: { workflowScript: "return 1" } });
+		assert.deepEqual(normalizePublicSubagentExecution({ workflowScript: "return 1", globalConcurrencyLimit: 4, maxSubagentSpawnsPerRun: 8 }), {
+			ok: true,
+			params: { workflowScript: "return 1", globalConcurrencyLimit: 4, maxSubagentSpawnsPerRun: 8 },
+		});
 		assert.deepEqual(normalizePublicSubagentExecution({ workflow: "review", args: { task: "Review this" } }), { ok: true, params: { workflow: "review", args: { task: "Review this" } } });
 		assert.deepEqual(normalizePublicSubagentExecution({ workflowScript: "return 1", preflight: { version: 1, lanes: [] } }), { ok: true, params: { workflowScript: "return 1", preflight: { version: 1, lanes: [] } } });
 		assert.deepEqual(normalizePublicSubagentExecution({ workflowScriptPath: "workflows/review.js" }), { ok: true, params: { workflowScriptPath: "workflows/review.js" } });
@@ -67,6 +70,29 @@ describe("public subagent execution normalization", () => {
 			normalizePublicSubagentExecution({ action: " schedule.create ", every: "1h", workflowScriptPath: "/tmp/workflow.js" }),
 			{ ok: true, params: { action: "schedule.create", every: "1h", workflowScriptPath: "/tmp/workflow.js" } },
 		);
+	});
+
+	it("rejects capacity overrides unless a raw workflow script is supplied", () => {
+		for (const field of ["globalConcurrencyLimit", "maxSubagentSpawnsPerRun"] as const) {
+			for (const value of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Infinity, "4", null]) {
+				const result = normalizePublicSubagentExecution({ workflowScript: "return 1", [field]: value });
+				assert.equal(result.ok, false, `${field}=${String(value)}`);
+				if (!result.ok) assert.match(result.error, new RegExp(`${field} must be a positive safe integer`));
+			}
+		}
+		for (const params of [
+			{ agent: "worker", globalConcurrencyLimit: 2 },
+			{ action: "list", maxSubagentSpawnsPerRun: 2 },
+			{ workflow: "review", globalConcurrencyLimit: 2 },
+		] as const) {
+			const result = normalizePublicSubagentExecution(params);
+			assert.equal(result.ok, false, JSON.stringify(params));
+			if (!result.ok) assert.match(result.error, /only supported with workflowScript or workflowScriptPath/);
+		}
+		assert.deepEqual(normalizePublicSubagentExecution({ workflowScriptPath: "workflow.js", globalConcurrencyLimit: 2, maxSubagentSpawnsPerRun: 3 }), {
+			ok: true,
+			params: { workflowScriptPath: "workflow.js", globalConcurrencyLimit: 2, maxSubagentSpawnsPerRun: 3 },
+		});
 	});
 
 	it("rejects workflowScript with workflowScriptPath", () => {

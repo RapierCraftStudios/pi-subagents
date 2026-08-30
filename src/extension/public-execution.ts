@@ -22,6 +22,8 @@ export interface PublicSubagentExecutionParams {
 	args?: unknown;
 	workflowScript?: unknown;
 	workflowScriptPath?: unknown;
+	globalConcurrencyLimit?: unknown;
+	maxSubagentSpawnsPerRun?: unknown;
 	preflight?: unknown;
 	isolation?: unknown;
 	worktree?: unknown;
@@ -47,6 +49,14 @@ export type PublicSubagentExecutionNormalization<T> =
 	| { ok: true; params: T }
 	| { ok: false; error: string; mode: PublicSubagentExecutionMode };
 
+export function validateWorkflowCapacityOverrides(params: Pick<PublicSubagentExecutionParams, "globalConcurrencyLimit" | "maxSubagentSpawnsPerRun">): string | undefined {
+	for (const field of ["globalConcurrencyLimit", "maxSubagentSpawnsPerRun"] as const) {
+		const value: unknown = params[field];
+		if (value !== undefined && (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1)) return `${field} must be a positive safe integer.`;
+	}
+	return undefined;
+}
+
 /**
  * Enforce the public execution cutover before requests reach the executor.
  * Internal runs.run children and structured owned delegation bypass this boundary.
@@ -59,6 +69,12 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 	}
 	if (params.workflowScript !== undefined && params.workflowScriptPath !== undefined) {
 		return { ok: false, error: "workflowScript and workflowScriptPath are mutually exclusive.", mode: "workflow" };
+	}
+	const capacityError = validateWorkflowCapacityOverrides(params);
+	if (capacityError) return { ok: false, error: capacityError, mode: "workflow" };
+	const hasWorkflowScriptInput = params.workflowScript !== undefined || params.workflowScriptPath !== undefined;
+	if ((params.globalConcurrencyLimit !== undefined || params.maxSubagentSpawnsPerRun !== undefined) && !hasWorkflowScriptInput) {
+		return { ok: false, error: "globalConcurrencyLimit and maxSubagentSpawnsPerRun are only supported with workflowScript or workflowScriptPath.", mode: "workflow" };
 	}
 	const hasNamedWorkflow = params.workflow !== undefined;
 	if (hasNamedWorkflow && (typeof params.workflow !== "string" || !params.workflow.trim())) {

@@ -4,6 +4,7 @@
 ## [Unreleased]
 
 ### Changed
+- Add public top-level `workflowScript` capacity overrides for `globalConcurrencyLimit` and `maxSubagentSpawnsPerRun`, with safe-integer validation and authoritative nested run-fanout inheritance.
 - Show effective model mappings for discovered and runtime-registered subagents through management and `/subagents-models`. Thanks [@RapierCraft](https://github.com/RapierCraft) for #1732.
 - Trim default subagent prompt guidelines to five parent-facing entries while keeping advanced workflow details in the packaged guide. Thanks [@Ran-Xing](https://github.com/Ran-Xing) for #1746.
 - Add extension-owned named workflow resources so permission/policy extensions can distinguish resolved provenance from raw workflow scripts and enforce resource-scoped host command authority. Thanks [@mathiasloh](https://github.com/mathiasloh) for #1751.
