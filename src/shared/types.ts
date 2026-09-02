@@ -2481,6 +2481,15 @@ export interface ActiveAsyncCapacityConfig {
 	abandonedSlotReleaseAfterMs?: number | false;
 }
 
+export interface WorktreeReaperConfig {
+	/** Opt in to periodically reaping only planner-proven terminal managed worktrees. */
+	enabled?: boolean;
+	/** Delay between passes. Defaults to 15 minutes. */
+	intervalMs?: number;
+	/** Minimum handoff age before removal. Defaults to 60 minutes. */
+	minimumAgeMs?: number;
+}
+
 export interface ExtensionConfig {
 	asyncByDefault?: boolean;
 	/** Set the context for launches that omit an explicit context. */
@@ -2552,6 +2561,8 @@ export interface ExtensionConfig {
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
 	worktreeBaseDir?: string;
+	/** Opt-in cleanup for terminal managed worktrees under worktreeBaseDir. */
+	worktreeReaper?: WorktreeReaperConfig;
 	/** Where to store subagent artifact files. Defaults to "session" (the pi session directory, or OS temp when unavailable). Set to "project" for cwd/.pi/subagents. */
 	artifactDir?: ArtifactDirPreference;
 	/** Artifact cleanup retention. Set cleanupDays to 0 to disable cleanup. */

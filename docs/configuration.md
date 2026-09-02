@@ -392,6 +392,22 @@ The default injected guidance tells children to use `contact_supervisor` with `r
 
 Sets the base directory for `worktree: true` runs. Relative paths resolve from the repository root, `~/...` expands to your home directory, and `PI_SUBAGENTS_WORKTREE_DIR` is used when config is unset. The default remains the system temp directory.
 
+## `worktreeReaper`
+
+```json
+{
+  "artifactDir": "project",
+  "worktreeBaseDir": "~/.pi/agent/worktrees",
+  "worktreeReaper": {
+    "enabled": true,
+    "intervalMs": 900000,
+    "minimumAgeMs": 3600000
+  }
+}
+```
+
+Opt-in cleanup for disk-backed managed worktrees. The reaper reuses the existing cleanup planner and removes only worktrees with repository-scoped ownership metadata, terminal run evidence, a clean status, durable outputs, and safe divergence. It revalidates those facts immediately before removal, never deletes branches, and leaves active, resumable, dirty, unowned, stale, or ambiguous worktrees untouched. `artifactDir: "project"` is required so ownership metadata is discoverable without scanning user session or temporary directories. The first pass runs one minute after session start; later passes use `intervalMs` (default 15 minutes). `minimumAgeMs` defaults to one hour.
+
 ## `worktreeSetupHook`
 
 ```json

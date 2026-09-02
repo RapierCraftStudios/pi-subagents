@@ -95,6 +95,22 @@ function validateCapacityConfig(value: unknown): void {
 	}
 }
 
+function validateWorktreeReaperConfig(value: unknown): void {
+	if (value === undefined) return;
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("config.worktreeReaper must be a JSON object");
+	const config = value as Record<string, unknown>;
+	if (config.enabled !== undefined && typeof config.enabled !== "boolean") throw new Error("config.worktreeReaper.enabled must be a boolean");
+	for (const [key, minimum, maximum] of [
+		["intervalMs", 5 * 60_000, 24 * 60 * 60_000],
+		["minimumAgeMs", 5 * 60_000, 30 * 24 * 60 * 60_000],
+	] as const) {
+		const candidate = config[key];
+		if (candidate !== undefined && (typeof candidate !== "number" || !Number.isInteger(candidate) || candidate < minimum || candidate > maximum)) {
+			throw new Error(`config.worktreeReaper.${key} must be an integer from ${minimum} to ${maximum}`);
+		}
+	}
+}
+
 /** Validate the user-controlled TTL policy before it reaches the exclusion store. */
 // TEST:test/unit/pi-coding-agent-dir.test.ts[loads and applies model exclusion TTL config]
 function validateModelExclusionsConfig(value: unknown): void {
@@ -165,6 +181,10 @@ function validateConfig(config: Record<string, unknown>): void {
 	validateFleetKeybindingsConfig(config.fleetKeybindings);
 	validateArtifactConfig(config.artifactConfig);
 	validateCapacityConfig(config.capacity);
+	validateWorktreeReaperConfig(config.worktreeReaper);
+	if ((config.worktreeReaper as Record<string, unknown> | undefined)?.enabled === true && config.artifactDir !== "project") {
+		throw new Error('config.worktreeReaper.enabled requires artifactDir="project" so ownership metadata remains repository-scoped and discoverable');
+	}
 	validateModelExclusionsConfig(config.modelExclusions);
 	validateMainWindowRendererConfig(config.mainWindowRenderer);
 	validateOrcaProgressTabsConfig(config.orcaProgressTabs);

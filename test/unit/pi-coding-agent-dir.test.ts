@@ -333,6 +333,23 @@ Package skill content.
 		assert.throws(() => updateConfig((config) => config), /config\.artifactDir must be "project", "session", or "temp"/);
 	});
 
+	it("loads and validates the opt-in worktree reaper", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		writeFile(configPath, JSON.stringify({
+			artifactDir: "project",
+			worktreeReaper: { enabled: true, intervalMs: 900_000, minimumAgeMs: 3_600_000 },
+		}));
+		assert.deepEqual(loadConfig().worktreeReaper, { enabled: true, intervalMs: 900_000, minimumAgeMs: 3_600_000 });
+
+		writeFile(configPath, JSON.stringify({ artifactDir: "session", worktreeReaper: { enabled: true } }));
+		assert.throws(() => updateConfig((config) => config), /requires artifactDir="project"/);
+
+		for (const invalid of [0, 60_000, "900000", null]) {
+			writeFile(configPath, JSON.stringify({ artifactDir: "project", worktreeReaper: { enabled: true, intervalMs: invalid } }));
+			assert.throws(() => updateConfig((config) => config), /config\.worktreeReaper\.intervalMs must be an integer/);
+		}
+	});
+
 	it("loads and validates abandoned async capacity cleanup policy", () => {
 		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
 		writeFile(configPath, JSON.stringify({ capacity: { abandonedSlotReleaseAfterMs: 600_000 } }));

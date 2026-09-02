@@ -812,6 +812,73 @@ function formatPlanEntry(entry: WorktreeCleanupPlanEntry): string {
 	return `- ${target}: ${entry.reasons.join("; ") || "no reason recorded"}`;
 }
 
+export interface WorktreeReaperResult {
+	repoRoot: string;
+	removed: string[];
+	skipped: Array<{ path: string; reason: string }>;
+	pruned: boolean;
+	errors: string[];
+}
+
+/**
+ * Reap only terminal managed worktrees that the existing cleanup planner proves
+ * removable at the moment of deletion. Branches are deliberately retained so
+ * automatic disk cleanup never discards Git history.
+ */
+export function reapManagedWorktrees(input: BuildWorktreeCleanupPlanInput & { minimumAgeMs?: number }): WorktreeReaperResult {
+	const now = input.now ?? Date.now();
+	const minimumAgeMs = input.minimumAgeMs ?? 60 * 60_000;
+	const initial = buildWorktreeCleanupPlan({ ...input, now });
+	const result: WorktreeReaperResult = { repoRoot: initial.repoRoot, removed: [], skipped: [], pruned: false, errors: [] };
+	for (const candidate of initial.entries.filter((entry) => entry.decision === "remove")) {
+		if (!candidate.handoffPath) {
+			result.skipped.push({ path: candidate.path, reason: "safe plan entry has no handoff ownership path" });
+			continue;
+		}
+		try {
+			const age = now - fs.statSync(candidate.handoffPath).mtimeMs;
+			if (age < minimumAgeMs) {
+				result.skipped.push({ path: candidate.path, reason: `handoff is younger than minimum age (${Math.max(0, Math.floor(age))}ms)` });
+				continue;
+			}
+		} catch (error) {
+			result.skipped.push({ path: candidate.path, reason: `handoff age could not be verified: ${error instanceof Error ? error.message : String(error)}` });
+			continue;
+		}
+
+		// Rebuild from live Git, handoff, status, marker, and filesystem evidence
+		// immediately before deletion. Any drift turns the candidate into a skip.
+		const currentPlan = buildWorktreeCleanupPlan({
+			...input,
+			handoffPath: candidate.handoffPath,
+			handoffPaths: [],
+			now,
+		});
+		const current = currentPlan.entries.find((entry) => samePath(entry.path, candidate.path) && entry.branch === candidate.branch);
+		if (!current || current.decision !== "remove" || current.state !== "safe") {
+			result.skipped.push({ path: candidate.path, reason: current?.reasons.join("; ") || "candidate was not removable during live revalidation" });
+			continue;
+		}
+		if (JSON.stringify(current.preconditions) !== JSON.stringify(candidate.preconditions)) {
+			result.skipped.push({ path: candidate.path, reason: "cleanup preconditions changed during revalidation" });
+			continue;
+		}
+		try {
+			runGitChecked(initial.repoRoot, ["worktree", "remove", "--force", candidate.path]);
+			result.removed.push(candidate.path);
+		} catch (error) {
+			result.errors.push(`failed to remove ${candidate.path}: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+	try {
+		runGitChecked(initial.repoRoot, ["worktree", "prune"]);
+		result.pruned = true;
+	} catch (error) {
+		result.errors.push(`git worktree prune failed: ${error instanceof Error ? error.message : String(error)}`);
+	}
+	return result;
+}
+
 export function formatWorktreeCleanupPlan(created: CreatedWorktreeCleanupPlan): string {
 	const { plan, planPath } = created;
 	const removable = plan.entries.filter((entry) => entry.decision === "remove");
