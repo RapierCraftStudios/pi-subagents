@@ -9,6 +9,7 @@ import {
 	buildWorktreeCleanupPlan,
 	createWorktreeCleanupPlan,
 	formatWorktreeCleanupPlan,
+	reapManagedWorktrees,
 	type BuildWorktreeCleanupPlanInput,
 	type WorktreeCleanupPlan,
 } from "../../src/runs/shared/worktree-cleanup-plan.ts";
@@ -287,6 +288,36 @@ describe("worktree cleanup plan", () => {
 			assert.equal(captured.entries[0]?.decision, "remove");
 			assert.equal(captured.entries[0]?.state, "safe");
 			assert.equal(captured.entries[0]?.willDeleteBranch, false);
+		} finally {
+			removeGeneratedWorktrees(repo, setup);
+			fs.rmSync(repo, { recursive: true, force: true });
+			fs.rmSync(baseDir, { recursive: true, force: true });
+		}
+	});
+
+	it("reaps only planner-proven terminal worktrees and retains their branches", () => {
+		const repo = createRepo("pi-cleanup-reaper-");
+		const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-cleanup-reaper-base-"));
+		let setup: WorktreeSetup | undefined;
+		try {
+			setup = createWorktrees(repo, "reaper", 1, { baseDir });
+			const worktree = setup.worktrees[0]!;
+			const manifestPath = path.join(repo, ".pi", "subagents", "artifacts", "handoff.json");
+			writeManifest({ repo, manifestPath, setup, source: "async" });
+			const statusPath = path.join(repo, ".pi", "subagents", "artifacts", "status.json");
+			fs.writeFileSync(statusPath, JSON.stringify({ runId: "cleanup-run", state: "running" }), "utf-8");
+			fs.utimesSync(manifestPath, new Date(0), new Date(0));
+			const active = reapManagedWorktrees({ repo, worktreeBaseDir: baseDir, minimumAgeMs: 0, now: 100_000 });
+			assert.deepEqual(active.removed, []);
+			assert.equal(fs.existsSync(worktree.path), true, "active worktree must be retained");
+
+			fs.writeFileSync(statusPath, JSON.stringify({ runId: "cleanup-run", state: "complete" }), "utf-8");
+			const worktreePath = __testables.realpathExisting(worktree.path);
+			const result = reapManagedWorktrees({ repo, worktreeBaseDir: baseDir, minimumAgeMs: 0, now: 100_000 });
+			assert.deepEqual(result.errors, []);
+			assert.deepEqual(result.removed, [worktreePath]);
+			assert.equal(fs.existsSync(worktree.path), false);
+			assert.notEqual(git(repo, ["branch", "--list", worktree.branch]), "", "automatic reaping must retain Git history");
 		} finally {
 			removeGeneratedWorktrees(repo, setup);
 			fs.rmSync(repo, { recursive: true, force: true });

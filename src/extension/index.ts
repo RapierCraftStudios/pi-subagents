@@ -38,6 +38,7 @@ import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
 import { getActiveAsyncCapacitySnapshot, resolveAbandonedSlotReleaseAfterMs, resolveMaxActiveAsyncRunsPerSession } from "../runs/background/active-async-capacity.ts";
 import { cleanupResultIndexes, missionObserverResultCandidateFiles } from "../runs/background/result-files.ts";
 import { ASYNC_RETENTION_DELAY_MS, cleanupAsyncRetention } from "../runs/background/async-retention.ts";
+import { reapManagedWorktrees } from "../runs/shared/worktree-cleanup-plan.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
 import { createResultDeliveryOwnership } from "../runs/background/result-delivery-ownership.ts";
 import { createScheduledRunManager } from "../runs/background/scheduled-runs.ts";
@@ -583,6 +584,32 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	}, ASYNC_RETENTION_DELAY_MS);
 	asyncRetentionTimer.unref?.();
 
+	const worktreeReaperIntervalMs = config.worktreeReaper?.intervalMs ?? 15 * 60_000;
+	const worktreeReaperMinimumAgeMs = config.worktreeReaper?.minimumAgeMs ?? 60 * 60_000;
+	let worktreeReaperTimer: NodeJS.Timeout | undefined;
+	const scheduleWorktreeReaper = (delayMs: number): void => {
+		if (config.worktreeReaper?.enabled !== true) return;
+		if (worktreeReaperTimer) clearTimeout(worktreeReaperTimer);
+		worktreeReaperTimer = setTimeout(() => {
+			try {
+				if (state.baseCwd) {
+					const result = reapManagedWorktrees({
+						repo: state.baseCwd,
+						worktreeBaseDir: config.worktreeBaseDir,
+						minimumAgeMs: worktreeReaperMinimumAgeMs,
+					});
+					if (result.removed.length > 0) console.log(`[pi-subagents] worktree reaper removed=${result.removed.length}`);
+					if (result.errors.length > 0) console.error(`[pi-subagents] worktree reaper errors=${result.errors.length}: ${result.errors.join("; ")}`);
+				}
+			} catch (error) {
+				console.error("[pi-subagents] worktree reaper failed:", error);
+			} finally {
+				if (!runtimeCleaned) scheduleWorktreeReaper(worktreeReaperIntervalMs);
+			}
+		}, delayMs);
+		worktreeReaperTimer.unref?.();
+	};
+
 	const executor = createSubagentExecutor({
 		pi,
 		state,
@@ -971,6 +998,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			clearRuntimeAgentsForPi(pi);
 			clearTimeout(resultIndexCleanupTimer);
 			clearTimeout(asyncRetentionTimer);
+			if (worktreeReaperTimer) clearTimeout(worktreeReaperTimer);
+			worktreeReaperTimer = undefined;
 			asyncRetentionAbort.abort();
 			stopResultWatcher();
 			resultDeliveryOwnership.clear();
@@ -1077,6 +1106,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		installRuntime(ctx);
 		const recovering = event.reason === "startup" || event.reason === "reload" || event.reason === "resume";
 		resetSessionState(ctx, recovering, event.previousSessionFile);
+		scheduleWorktreeReaper(60_000);
 		herdrStatusBridge.sessionStarted({
 			hasUI: ctx.hasUI === true,
 			runs: activeHerdrRuns(),
