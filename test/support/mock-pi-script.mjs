@@ -249,7 +249,9 @@ function writeSessionFile(args) {
 		const sessionFile = args[i + 1];
 		if (!sessionFile) return;
 		fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
-		fs.writeFileSync(sessionFile, "", { flag: "a" });
+		if (!fs.existsSync(sessionFile) || fs.statSync(sessionFile).size === 0) {
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "mock-child", cwd: process.cwd() })}\n`);
+		}
 		return;
 	}
 }

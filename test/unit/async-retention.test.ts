@@ -106,6 +106,9 @@ describe("async retention cleanup", () => {
 			assert.equal(JSON.parse(fs.readFileSync(path.join(protectedDir, "status.json"), "utf-8")).state, "running");
 			assert.equal(repaired.skipped["runtime-reference"], 1);
 
+			// Reconciliation created these on the real clock; keep physical age on the
+			// fixture clock too so this check does not expire as calendar time advances.
+			for (const file of [runDir, path.join(runDir, "status.json")]) fs.utimesSync(file, NOW / 1000, NOW / 1000);
 			const retained = await cleanupAsyncRetention({
 				...cleanupOptions(roots),
 				now: () => NOW + 45 * DAY_MS,

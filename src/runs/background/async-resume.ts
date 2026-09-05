@@ -431,6 +431,27 @@ function validateResumeSessionFile(runId: string, sessionFile: string): string {
 	return resolved;
 }
 
+/** Read only the bounded session header, never the conversation transcript. */
+function readResumeSessionCwd(runId: string, sessionFile: string): string {
+	let fd: number | undefined;
+	try {
+		fd = fs.openSync(sessionFile, "r");
+		const buffer = Buffer.alloc(64 * 1024);
+		const bytes = fs.readSync(fd, buffer, 0, buffer.length, 0);
+		const newline = buffer.subarray(0, bytes).indexOf(0x0a);
+		if (newline < 0 && bytes === buffer.length) throw new Error("session header exceeds 64 KiB");
+		const header = JSON.parse(buffer.subarray(0, newline < 0 ? bytes : newline).toString("utf-8"));
+		if (header?.type !== "session" || typeof header.cwd !== "string" || !header.cwd.trim()) {
+			throw new Error("session header must contain a cwd");
+		}
+		return header.cwd;
+	} catch (error) {
+		throw new Error(`Async run '${runId}' could not read session cwd from '${sessionFile}': ${getErrorMessage(error)}`, { cause: error instanceof Error ? error : undefined });
+	} finally {
+		if (fd !== undefined) fs.closeSync(fd);
+	}
+}
+
 function validateResumeCwd(runId: string, cwd: string | undefined): string | undefined {
 	if (!cwd) return undefined;
 	const resolved = path.resolve(cwd);
@@ -557,7 +578,8 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 	const managedWorktreeCwd = location.asyncDir
 		? resolveRetainedWorktreeCwd(parallelHandoffPath(location.asyncDir), runId, index)
 		: undefined;
-	const resumeCwd = validateResumeCwd(runId, managedWorktreeCwd ?? status?.cwd ?? result?.cwd ?? recoveryDescriptor?.cwd);
+	const sessionCwd = resolvedSessionFile ? validateResumeCwd(runId, readResumeSessionCwd(runId, resolvedSessionFile)) : undefined;
+	const resumeCwd = validateResumeCwd(runId, managedWorktreeCwd ?? sessionCwd ?? status?.cwd ?? result?.cwd ?? recoveryDescriptor?.cwd);
 
 	return {
 		kind: "revive",

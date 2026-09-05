@@ -241,7 +241,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		fs.mkdirSync(path.dirname(filePath), { recursive: true });
 		fs.writeFileSync(
 			filePath,
-			`---\nname: ${name}\ndescription: ${name} agent\nmodel: ${model}\n---\n\nUse ${model}.\n`,
+			`---\nname: ${name}\ndescription: ${name} agent\nmodel: ${model}\nthinking: false\n---\n\nUse ${model}.\n`,
 			"utf-8",
 		);
 	}

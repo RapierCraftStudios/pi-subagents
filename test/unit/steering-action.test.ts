@@ -164,7 +164,7 @@ describe("acknowledged steering action", () => {
 		const asyncDir = path.join(ASYNC_DIR, runId);
 		const sessionFile = path.join(asyncDir, "child.jsonl");
 		fs.mkdirSync(asyncDir, { recursive: true });
-		fs.writeFileSync(sessionFile, "", "utf-8");
+		fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: asyncDir })}\n`, "utf-8");
 		writeStatus(asyncDir, {
 			...runningStatus(runId),
 			state: "complete",
@@ -281,7 +281,7 @@ describe("acknowledged steering action", () => {
 		const asyncDir = path.join(ASYNC_DIR, runId);
 		const sessionFile = path.join(asyncDir, "child.jsonl");
 		writeStatus(asyncDir, runningStatus(runId));
-		fs.writeFileSync(sessionFile, "", "utf-8");
+		fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: asyncDir })}\n`, "utf-8");
 		const descriptorPath = path.join(asyncDir, "recovery-descriptor.json");
 		writePrivateAtomicJson(descriptorPath, recoveryDescriptor(runId));
 		if (process.platform !== "win32") assert.equal(fs.statSync(descriptorPath).mode & 0o777, 0o600);

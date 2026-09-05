@@ -408,6 +408,39 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
+	it("restored observer safety sweep reports a dead runner without filesystem events", async () => {
+		const asyncRoot = createTempDir("pi-async-job-restore-dead-pid-");
+		try {
+			const runDir = path.join(asyncRoot, "restored-dead-pid");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: "restored-dead-pid", mode: "single", state: "running", sessionId: "restore-owner", pid: 12345,
+				startedAt: Date.now() - 1000, lastUpdate: Date.now() - 1000,
+				steps: [{ agent: "worker", status: "running" }],
+			}));
+			updateActiveRunIndex(runDir, "running");
+			const state = createState();
+			state.currentSessionId = "restore-owner";
+			const recorder = createEventRecorder();
+			let alive = true;
+			let terminalNotices = 0;
+			const tracker = createTracker(recorder.pi, state as never, asyncRoot, {
+				resultsDir: path.join(asyncRoot, "results"),
+				platform: "darwin",
+				onJobTerminal: () => { terminalNotices++; },
+				kill: () => alive ? true : pidGone(),
+			});
+			tracker.restoreActiveJobs();
+			assert.equal(state.asyncJobs.get("restored-dead-pid")?.status, "running");
+			alive = false;
+			await waitForCondition(() => state.asyncJobs.get("restored-dead-pid")?.status === "failed", "restored dead PID safety sweep", 8000);
+			assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, "status.json"), "utf-8")).state, "failed");
+			assert.equal(terminalNotices, 1, "observer must notify terminal delivery exactly once");
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
 	it("refreshes restored nested async children from event files before the liveness sweep", async () => {
 		const asyncRoot = createTempDir("pi-async-job-restore-nested-events-");
 		const nestedRoute = createNestedRoute("run-restored-nested");

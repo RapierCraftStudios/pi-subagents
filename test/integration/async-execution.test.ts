@@ -4897,7 +4897,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const sourceId = `async-revive-parent-model-${Date.now().toString(36)}`;
 		const sessionFile = path.join(tempDir, "sessions", "source.jsonl");
 		fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
-		fs.writeFileSync(sessionFile, "", "utf-8");
+		fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: tempDir })}\n`, "utf-8");
 		executeAsyncSingle(sourceId, {
 			agent: "worker",
 			task: "Initial work",
@@ -4939,7 +4939,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const evidenceDir = path.join(tempDir, "request-discovery", "agents");
 		try {
 			fs.mkdirSync(asyncDir, { recursive: true });
-			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: tempDir })}\n`, "utf-8");
 			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
 				runId,
 				sessionId: "session-123",
