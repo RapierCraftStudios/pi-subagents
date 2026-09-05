@@ -2148,12 +2148,18 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	});
 
 	it("persists parent-stopped workflow children as stopped instead of failed", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
+		execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
+		execFileSync("git", ["config", "user.name", "Test User"], { cwd: tempDir });
+		fs.writeFileSync(path.join(tempDir, "base.txt"), "base\n");
+		execFileSync("git", ["add", "base.txt"], { cwd: tempDir });
+		execFileSync("git", ["commit", "-m", "base"], { cwd: tempDir, stdio: "ignore" });
 		mockPi.onCall({ delay: 5_000, output: "too late" });
 		const workflowControllers = new Map<string, AbortController>();
 		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), workflowControllers);
 		const started = await executor.execute(
 			`workflow-stop-child-${Date.now()}`,
-			{ workflowScript: `return await runs.run("review", { agent: "echo", task: "Wait" });` },
+			{ workflowScript: `return await runs.run("review", { agent: "echo", task: "Wait", worktree: true });` },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
@@ -2173,6 +2179,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		}
 		const childPid = Number(childCall?.match(/^call-\d+-(\d+)-/)?.[1]);
 		assert.equal(Number.isInteger(childPid) && childPid > 0, true);
+
+		const childCwd = readCall().cwd!;
+		assert.notEqual(childCwd, tempDir);
+		assert.ok(fs.existsSync(childCwd), "live owner cwd must remain available");
 
 		const stopped = await executor.execute(
 			"stop-workflow-child",
@@ -2210,6 +2220,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			await new Promise((resolve) => setTimeout(resolve, 20));
 		}
 		assert.equal(childSettled, true, "child process must settle after the workflow stop");
+		for (let attempt = 0; attempt < 100 && fs.existsSync(childCwd); attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(fs.existsSync(childCwd), false, "explicit stop must not retain a clean child cwd");
 		await new Promise((resolve) => setTimeout(resolve, 50));
 		status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
 		assert.equal(status.steps?.[0]?.status, "stopped");
@@ -2498,6 +2512,91 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(handoff.groups[0]?.cleanup.state, "complete");
 		assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.worktreeRemoved, true);
 
+	});
+
+	for (const exitCode of [0, 1]) {
+		it(`retains a clean foreground workflow child cwd and session after exit ${exitCode}`, { skip: !createSubagentExecutor }, async () => {
+			execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
+			execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
+			execFileSync("git", ["config", "user.name", "Test User"], { cwd: tempDir });
+			fs.writeFileSync(path.join(tempDir, "base.txt"), "base\n");
+			execFileSync("git", ["add", "base.txt"], { cwd: tempDir });
+			execFileSync("git", ["commit", "-m", "base"], { cwd: tempDir, stdio: "ignore" });
+			mockPi.onCall({ output: "clean child", exitCode });
+			const result = await makeExecutor([makeAgent("worker", { completionGuard: false })]).execute(
+				"retained-clean-child", { async: false, workflowScript: `return runs.run("clean", { agent: "worker", task: "Inspect only", worktree: true });` },
+				new AbortController().signal, undefined, makeMinimalCtx(tempDir),
+			);
+			assert.equal(mockPi.callCount(), 1);
+			const child = result.details.results[0]!;
+			assert.equal(child.exitCode, exitCode);
+			assert.ok(child.sessionFile);
+			assert.ok(fs.existsSync(child.sessionFile));
+			const cwd = readCall().cwd!;
+			assert.notEqual(cwd, tempDir);
+			assert.ok(fs.existsSync(cwd), "resumable workflow cwd must survive clean completion/failure");
+			const childRunId = result.details.workflow?.trace.find((entry) => entry.key === "clean" && entry.runId)?.runId;
+			assert.ok(childRunId);
+			const handoffPath = path.join(TEMP_ARTIFACTS_DIR, "handoffs", `${childRunId}.json`);
+			assert.ok(handoffPath);
+			const handoff = JSON.parse(fs.readFileSync(handoffPath, "utf-8"));
+			assert.equal(handoff.groups[0].cleanup.tasks[0].reason, "retained child resume requires managed worktree cwd");
+			assert.equal(handoff.groups[0].cleanup.tasks[0].worktreeRemoved, false);
+		});
+	}
+
+	for (const phase of ["pre-start", "post-start"] as const) {
+		it(`foreground workflow worktree ${phase} rejection preserves only a persisted child`, { skip: !createSubagentExecutor }, async () => {
+			execFileSync("git", ["init"], { cwd: tempDir, stdio: "ignore" });
+			execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
+			execFileSync("git", ["config", "user.name", "Test User"], { cwd: tempDir });
+			fs.writeFileSync(path.join(tempDir, "base.txt"), "base\n");
+			execFileSync("git", ["add", "base.txt"], { cwd: tempDir });
+			execFileSync("git", ["commit", "-m", "base"], { cwd: tempDir, stdio: "ignore" });
+			const baseDir = path.join(tempDir, ".pi", "managed");
+			const hookPath = path.join(mockPi.dir, "setup.sh");
+			fs.writeFileSync(hookPath, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+			mockPi.onCall({ output: "clean child" });
+			const executor = makeExecutor([makeAgent("worker", { completionGuard: false })], { worktreeBaseDir: baseDir, ...(phase === "pre-start" ? { worktreeSetupHook: hookPath } : {}) });
+			const result = await executor.execute("workflow-rejection", {
+				async: false, agent: "worker", task: "Inspect only", worktree: true,
+				workflowParentRunId: "owning-workflow", workflowKey: "child",
+			}, new AbortController().signal, (update) => {
+				if (update.details?.progress?.[0]?.status === "completed") throw new Error("terminal consumer failed");
+			}, makeMinimalCtx(tempDir));
+			assert.equal(result.isError, true);
+			if (phase === "pre-start") {
+				assert.equal(mockPi.callCount(), 0);
+				assert.equal(execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: tempDir, encoding: "utf-8" }).split("worktree ").length - 1, 1);
+				assert.deepEqual(fs.existsSync(baseDir) ? fs.readdirSync(baseDir) : [], []);
+			} else {
+				assert.match(result.content[0]?.text ?? "", /terminal consumer failed/);
+				assert.equal(mockPi.callCount(), 1);
+				const call = readCall();
+				assert.ok(fs.existsSync(call.args[call.args.indexOf("--session") + 1]!));
+				assert.ok(fs.existsSync(call.cwd!), "post-start rejection must retain resumable cwd");
+			}
+		});
+	}
+
+	it("rejects a missing stored workflow child cwd before launching a resume", { skip: !createSubagentExecutor }, async () => {
+		const runId = "workflow-missing-native-cwd";
+		const asyncDir = path.join(DIRS.async, runId);
+		const sessionFile = path.join(tempDir, "child.jsonl");
+		fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: path.join(tempDir, "removed-child") })}\n`);
+		fs.mkdirSync(asyncDir, { recursive: true });
+		try {
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId, sessionId: "session-123", mode: "workflow", state: "failed", cwd: tempDir, startedAt: 100, endedAt: 200, lastUpdate: 200,
+				steps: [{ agent: "worker", status: "failed", sessionFile }],
+			}));
+			const result = await makeExecutor([makeAgent("worker")]).execute("resume-missing-cwd", { action: "resume", runId, message: "Continue" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /required cwd does not exist/);
+			assert.equal(mockPi.callCount(), 0);
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+		}
 	});
 
 	it("aligns a forked workflow child session with its managed worktree cwd", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -2926,7 +3025,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const retainedOutputPath = path.join(tempDir, "context.md");
 		const runFanoutBudget = createRunFanoutBudget(retainedRunId, 10);
 		fs.mkdirSync(retainedAsyncDir, { recursive: true });
-		fs.writeFileSync(retainedSessionFile, "{}\n", "utf-8");
+		fs.writeFileSync(retainedSessionFile, `${JSON.stringify({ type: "session", version: 3, id: "retained", cwd: tempDir })}\n`, "utf-8");
 		fs.writeFileSync(path.join(retainedAsyncDir, "status.json"), JSON.stringify({
 			runId: retainedRunId,
 			sessionId: "session-123",
@@ -3512,13 +3611,13 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			assert.equal(handoff.groups[0]?.children[0]?.runId?.length > 0, true);
 			assert.equal(handoff.groups[0]?.children[0]?.patch.changed, true);
 			assert.equal(fs.existsSync(handoff.groups[0]!.children[0]!.patch.path), true);
-			assert.equal(handoff.groups[0]?.cleanup.state, "complete");
-			assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.worktreeRemoved, true);
-			assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.branchRemoved, true);
+			assert.equal(handoff.groups[0]?.cleanup.state, "partial");
+			assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.worktreeRemoved, false);
+			assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.branchRemoved, false);
 			worktreePaths.add(handoff.groups[0]!.cleanup.tasks[0]!.path);
 		}
 		assert.equal(worktreePaths.size, 2);
-		for (const worktreePath of worktreePaths) assert.equal(fs.existsSync(worktreePath), false);
+		for (const worktreePath of worktreePaths) assert.equal(fs.existsSync(worktreePath), true);
 		assert.match(result.content[0]?.text ?? "", /handoffs/);
 	});
 
@@ -3600,18 +3699,18 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.ok(branch);
 		assert.equal(fs.existsSync(worktreePath), true, "live detached worktree must remain present");
 
-		for (let attempt = 0; attempt < 150 && handoff.groups[0]?.cleanup.state !== "complete"; attempt++) {
+		for (let attempt = 0; attempt < 150 && handoff.groups[0]?.children[0]?.status !== "completed"; attempt++) {
 			await new Promise((resolve) => setTimeout(resolve, 20));
 			handoff = JSON.parse(fs.readFileSync(handoffPath, "utf-8")) as typeof handoff;
 		}
 		assert.equal(handoff.groups[0]?.children[0]?.status, "completed");
 		assert.equal(handoff.groups[0]?.children[0]?.patch.changed, true);
 		assert.equal(handoff.groups[0]?.children[0]?.patch.filesChanged, 1);
-		assert.equal(handoff.groups[0]?.cleanup.state, "complete");
-		assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.preserved, undefined);
-		assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.worktreeRemoved, true);
-		assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.branchRemoved, true);
-		assert.equal(fs.existsSync(worktreePath), false);
+		assert.equal(handoff.groups[0]?.cleanup.state, "partial");
+		assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.preserved, true);
+		assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.worktreeRemoved, false);
+		assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.branchRemoved, false);
+		assert.equal(fs.existsSync(worktreePath), true);
 		assert.equal(fs.existsSync(path.join(tempDir, "feature.txt")), false);
 	});
 
@@ -3723,10 +3822,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(handoff.groups[0]?.children[0]?.status, "completed");
 		assert.equal(handoff.groups[0]?.children[0]?.patch.changed, false);
 		assert.equal(handoff.groups[0]?.children[0]?.patch.filesChanged, 0);
-		assert.equal(handoff.groups[0]?.cleanup.state, "complete");
-		assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.worktreeRemoved, true);
-		assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.branchRemoved, true);
-		assert.equal(fs.existsSync(handoff.groups[0]?.cleanup.tasks[0]?.path ?? ""), false);
+		assert.equal(handoff.groups[0]?.cleanup.state, "partial");
+		assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.worktreeRemoved, false);
+		assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.branchRemoved, false);
+		assert.equal(fs.existsSync(handoff.groups[0]?.cleanup.tasks[0]?.path ?? ""), true);
 		assert.equal(fs.existsSync(activeMarkerPath), false);
 		fs.rmSync(started.details.asyncDir, { recursive: true, force: true });
 		fs.rmSync(resultPath, { force: true });
@@ -3929,13 +4028,13 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			assert.equal(handoff.groups.length, 1);
 			assert.equal(handoff.groups[0]?.children[0]?.patch.changed, true);
 			assert.equal(fs.existsSync(handoff.groups[0]!.children[0]!.patch.path), true);
-			assert.equal(handoff.groups[0]?.cleanup.state, "complete");
-			assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.worktreeRemoved, true);
-			assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.branchRemoved, true);
+			assert.equal(handoff.groups[0]?.cleanup.state, "partial");
+			assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.worktreeRemoved, false);
+			assert.equal(handoff.groups[0]?.cleanup.tasks[0]?.branchRemoved, false);
 			worktreePaths.add(handoff.groups[0]!.cleanup.tasks[0]!.path);
 		}
 		assert.equal(worktreePaths.size, 3);
-		for (const worktreePath of worktreePaths) assert.equal(fs.existsSync(worktreePath), false);
+		for (const worktreePath of worktreePaths) assert.equal(fs.existsSync(worktreePath), true);
 	});
 
 	it("applies a workflow usage budget across scripted child launches", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

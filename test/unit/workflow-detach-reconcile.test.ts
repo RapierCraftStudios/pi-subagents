@@ -154,7 +154,7 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 		fs.mkdirSync(asyncDir, { recursive: true });
 		fs.mkdirSync(childDir, { recursive: true });
 		fs.mkdirSync(DIRS.results, { recursive: true });
-		fs.writeFileSync(sessionFile, "", "utf-8");
+		fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: childDir })}\n`, "utf-8");
 		fs.writeFileSync(path.join(childDir, "status.json"), JSON.stringify({ runId: "child-1", mode: "single", state: "complete", startedAt: 1, lastUpdate: 2, sessionId: "session-1", steps: [{ agent: "worker", status: "complete", sessionFile }] }), "utf-8");
 		const status = { ...pausedWorkflow("child-1"), runId: workflowRunId, sessionId: "session-1" };
 		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(status), "utf-8");
@@ -711,7 +711,7 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 		const status = { ...pausedWorkflow(childRunId), runId: workflowRunId, sessionId: "session-1" };
 		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(status), "utf-8");
 		const sessionFile = path.join(childDir, "pi-session.jsonl");
-		fs.writeFileSync(sessionFile, "", "utf-8");
+		fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: childDir })}\n`, "utf-8");
 		fs.writeFileSync(path.join(childDir, "status.json"), JSON.stringify({
 			runId: childRunId,
 			mode: "parallel",

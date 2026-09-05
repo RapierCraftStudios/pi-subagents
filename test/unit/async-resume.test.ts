@@ -17,7 +17,7 @@ describe("async resume lookup", () => {
 		try {
 			const asyncRoot = path.join(root, "runs");
 			const sessionFile = path.join(root, "session.jsonl");
-			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: root })}\n`, "utf-8");
 			writeJson(path.join(asyncRoot, "run-abcde", "status.json"), {
 				runId: "run-abcde",
 				mode: "single",
@@ -47,7 +47,7 @@ describe("async resume lookup", () => {
 		try {
 			const asyncRoot = path.join(root, "runs");
 			const sessionFile = path.join(root, "child-session.jsonl");
-			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: root })}\n`, "utf-8");
 			writeJson(path.join(asyncRoot, "workflow-1", "status.json"), {
 				runId: "workflow-1",
 				mode: "workflow",
@@ -73,6 +73,45 @@ describe("async resume lookup", () => {
 		}
 	});
 
+	it("validates the selected stored child cwd without a handoff, not the existing parent cwd", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-session-cwd-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const sessionFile = path.join(root, "child.jsonl");
+			const childCwd = path.join(root, "child-cwd");
+			fs.mkdirSync(childCwd);
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: childCwd })}\n`);
+			writeJson(path.join(asyncRoot, "workflow-cwd", "status.json"), {
+				runId: "workflow-cwd", mode: "workflow", state: "failed", startedAt: 100, endedAt: 200, lastUpdate: 200,
+				cwd: root, steps: [{ agent: "worker", status: "failed", sessionFile }],
+			});
+			const resolve = () => resolveAsyncResumeTarget({ id: "workflow-cwd" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
+			assert.equal(resolve().cwd, childCwd);
+			fs.rmSync(childCwd, { recursive: true });
+			assert.throws(resolve, /required cwd does not exist/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects invalid or oversized stored session headers instead of falling back to parent cwd", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-header-"));
+		try {
+			const sessionFile = path.join(root, "child.jsonl");
+			const asyncRoot = path.join(root, "runs");
+			writeJson(path.join(asyncRoot, "bad-header", "status.json"), {
+				runId: "bad-header", mode: "workflow", state: "failed", cwd: root, startedAt: 100, endedAt: 200, lastUpdate: 200,
+				steps: [{ agent: "worker", status: "failed", sessionFile }],
+			});
+			for (const header of ["", "not json\n", JSON.stringify({ type: "message", cwd: root }), JSON.stringify({ type: "session" }), " ".repeat(64 * 1024)]) {
+				fs.writeFileSync(sessionFile, header);
+				assert.throws(() => resolveAsyncResumeTarget({ id: "bad-header" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }), /could not read session cwd/);
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("resolves a retained managed worktree cwd and fails closed when it is missing", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-missing-cwd-"));
 		try {
@@ -80,7 +119,7 @@ describe("async resume lookup", () => {
 			const asyncDir = path.join(asyncRoot, "run-missing-cwd");
 			const sessionFile = path.join(root, "session.jsonl");
 			const worktreeCwd = path.join(root, "managed-worktree");
-			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: root })}\n`, "utf-8");
 			fs.mkdirSync(worktreeCwd);
 			writeJson(path.join(asyncDir, "status.json"), {
 				runId: "run-missing-cwd", mode: "single", state: "complete", startedAt: 100, endedAt: 200, lastUpdate: 200,
@@ -121,7 +160,7 @@ describe("async resume lookup", () => {
 			const sessionFile = path.join(root, "session.jsonl");
 			fs.mkdirSync(repoCwd, { recursive: true });
 			fs.mkdirSync(worktreeCwd, { recursive: true });
-			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: root })}\n`, "utf-8");
 			writeJson(path.join(asyncDir, "status.json"), {
 				runId: "run-nested-cwd", mode: "single", state: "complete", startedAt: 100, endedAt: 200, lastUpdate: 200,
 				cwd: repoCwd,
@@ -151,7 +190,7 @@ describe("async resume lookup", () => {
 			const worktreeCwd = path.join(root, "managed-worktree");
 			const sessionFile = path.join(root, "session.jsonl");
 			fs.mkdirSync(worktreeCwd);
-			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: root })}\n`, "utf-8");
 			writeJson(path.join(asyncDir, "status.json"), {
 				runId: "run-mixed-cwd", mode: "parallel", state: "complete", startedAt: 100, endedAt: 200, lastUpdate: 200, cwd: root,
 				steps: [{ agent: "worktree-worker", status: "complete" }, { agent: "normal-worker", status: "complete", sessionFile }],
@@ -186,7 +225,7 @@ describe("async resume lookup", () => {
 			fs.mkdirSync(repoCwd, { recursive: true });
 			fs.mkdirSync(worktreeRoot);
 			fs.mkdirSync(outsideCwd);
-			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: root })}\n`, "utf-8");
 			try {
 				fs.symlinkSync(outsideCwd, path.join(worktreeRoot, "pkg"), "dir");
 			} catch (error) {
@@ -227,7 +266,7 @@ describe("async resume lookup", () => {
 			const asyncDir = path.join(asyncRoot, "run-ceiling");
 			const resultsDir = path.join(root, "results");
 			const sessionFile = path.join(root, "session.jsonl");
-			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: root })}\n`, "utf-8");
 			writeJson(path.join(asyncDir, "status.json"), {
 				runId: "run-ceiling", mode: "single", state: "complete", startedAt: 100, endedAt: 200, lastUpdate: 200, cwd: root,
 				capabilityCeiling: { version: 1, allowedTools: ["read", "write"], denyExtensions: true, sources: ["run"] },
@@ -270,7 +309,7 @@ describe("async resume lookup", () => {
 			const asyncDir = path.join(asyncRoot, "run-descriptor");
 			const resultsDir = path.join(root, "results");
 			const sessionFile = path.join(root, "session.jsonl");
-			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: root })}\n`, "utf-8");
 			writeJson(path.join(asyncDir, "status.json"), {
 				runId: "run-descriptor", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: root,
 				steps: [{ agent: "worker", status: "paused", sessionFile }],
@@ -325,7 +364,7 @@ describe("async resume lookup", () => {
 			const asyncDir = path.join(asyncRoot, "run-turn-budget");
 			const resultsDir = path.join(root, "results");
 			const sessionFile = path.join(root, "session.jsonl");
-			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: root })}\n`, "utf-8");
 			writeJson(path.join(asyncDir, "status.json"), {
 				runId: "run-turn-budget", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: root,
 				steps: [{ agent: "worker", status: "paused", sessionFile }],
@@ -379,7 +418,7 @@ describe("async resume lookup", () => {
 			const asyncDir = path.join(asyncRoot, "run-acceptance");
 			const resultsDir = path.join(root, "results");
 			const sessionFile = path.join(root, "session.jsonl");
-			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: root })}\n`, "utf-8");
 			writeJson(path.join(asyncDir, "status.json"), {
 				runId: "run-acceptance", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: root,
 				steps: [{ agent: "worker", status: "paused", sessionFile }],
@@ -428,7 +467,7 @@ describe("async resume lookup", () => {
 			const asyncDir = path.join(asyncRoot, "run-reviewed-acceptance");
 			const resultsDir = path.join(root, "results");
 			const sessionFile = path.join(root, "session.jsonl");
-			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: root })}\n`, "utf-8");
 			writeJson(path.join(asyncDir, "status.json"), {
 				runId: "run-reviewed-acceptance", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: root,
 				steps: [{ agent: "worker", status: "paused", sessionFile }],
@@ -472,7 +511,7 @@ describe("async resume lookup", () => {
 			const asyncDir = path.join(asyncRoot, "run-inferred-acceptance");
 			const resultsDir = path.join(root, "results");
 			const sessionFile = path.join(root, "session.jsonl");
-			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: root })}\n`, "utf-8");
 			writeJson(path.join(asyncDir, "status.json"), {
 				runId: "run-inferred-acceptance", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: root,
 				steps: [{ agent: "worker", status: "paused", sessionFile }],
@@ -515,7 +554,7 @@ describe("async resume lookup", () => {
 		try {
 			const asyncRoot = path.join(root, "runs");
 			const sessionFile = path.join(root, "session.jsonl");
-			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: root })}\n`, "utf-8");
 			writeJson(path.join(asyncRoot, "run-stopped", "status.json"), {
 				runId: "run-stopped",
 				mode: "single",
@@ -592,7 +631,7 @@ describe("async resume lookup", () => {
 		try {
 			const asyncRoot = path.join(root, "runs");
 			const sessionFile = path.join(root, "session.txt");
-			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: root })}\n`, "utf-8");
 			writeJson(path.join(asyncRoot, "run-session", "status.json"), {
 				runId: "run-session",
 				mode: "single",
@@ -834,7 +873,7 @@ describe("async resume lookup", () => {
 		try {
 			const asyncRoot = path.join(root, "runs");
 			const sessionFile = path.join(root, "done.jsonl");
-			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: root })}\n`, "utf-8");
 			writeJson(path.join(asyncRoot, "run-partial", "status.json"), {
 				runId: "run-partial",
 				mode: "parallel",
@@ -861,7 +900,7 @@ describe("async resume lookup", () => {
 		try {
 			const asyncRoot = path.join(root, "runs");
 			const sessionFile = path.join(root, "pending.jsonl");
-			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: root })}\n`, "utf-8");
 			writeJson(path.join(asyncRoot, "run-pending", "status.json"), {
 				runId: "run-pending",
 				mode: "chain",
@@ -889,8 +928,8 @@ describe("async resume lookup", () => {
 			const asyncRoot = path.join(root, "runs");
 			const firstSession = path.join(root, "a.jsonl");
 			const secondSession = path.join(root, "b.jsonl");
-			fs.writeFileSync(firstSession, "", "utf-8");
-			fs.writeFileSync(secondSession, "", "utf-8");
+			fs.writeFileSync(firstSession, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: root })}\n`, "utf-8");
+			fs.writeFileSync(secondSession, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: root })}\n`, "utf-8");
 			writeJson(path.join(asyncRoot, "run-multi", "status.json"), {
 				runId: "run-multi",
 				mode: "chain",
@@ -926,8 +965,8 @@ describe("async resume lookup", () => {
 			const resultsDir = path.join(root, "results");
 			const firstSession = path.join(root, "a.jsonl");
 			const secondSession = path.join(root, "b.jsonl");
-			fs.writeFileSync(firstSession, "", "utf-8");
-			fs.writeFileSync(secondSession, "", "utf-8");
+			fs.writeFileSync(firstSession, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: root })}\n`, "utf-8");
+			fs.writeFileSync(secondSession, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: root })}\n`, "utf-8");
 			writeJson(path.join(resultsDir, "run-result-only.json"), {
 				id: "run-result-only",
 				mode: "parallel",

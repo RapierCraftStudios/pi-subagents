@@ -70,7 +70,7 @@ function writeRetainedChild(input: {
 	const childDir = path.join(DIRS.async, input.childRunId);
 	fs.mkdirSync(childDir, { recursive: true });
 	const sessionFile = path.join(input.root, `${input.childRunId}.jsonl`);
-	if (input.writeSession !== false) fs.writeFileSync(sessionFile, "{}\n", "utf-8");
+	if (input.writeSession !== false) fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: input.root })}\n`, "utf-8");
 	const state = input.state ?? "complete";
 	const stepStatus = input.stepStatus ?? "complete";
 	fs.writeFileSync(path.join(childDir, "status.json"), JSON.stringify({

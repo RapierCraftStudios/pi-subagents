@@ -325,6 +325,32 @@ describe("worktree cleanup plan", () => {
 		}
 	});
 
+	it("cannot reap a clean terminal handoff retained for child resume", () => {
+		const repo = createRepo("pi-cleanup-retained-child-");
+		const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-cleanup-retained-base-"));
+		let setup: WorktreeSetup | undefined;
+		try {
+			setup = createWorktrees(repo, "retained-child", 1, { baseDir });
+			const manifestPath = path.join(repo, ".pi", "subagents", "artifacts", "handoff.json");
+			writeManifest({ repo, manifestPath, setup, source: "async" });
+			const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+			manifest.groups[0].cleanup.tasks[0].reason = "retained child resume requires managed worktree cwd";
+			fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+			fs.writeFileSync(path.join(path.dirname(manifestPath), "status.json"), JSON.stringify({ runId: "cleanup-run", state: "complete" }));
+			fs.utimesSync(manifestPath, new Date(0), new Date(0));
+			const plan = buildPlan({ repo, worktreeBaseDir: baseDir, minimumAgeMs: 0, now: 100_000 });
+			assert.equal(plan.entries[0]?.decision, "keep");
+			assert.match(plan.entries[0]?.reasons.join(" ") ?? "", /retained child resume/);
+			const reaped = reapManagedWorktrees({ repo, worktreeBaseDir: baseDir, minimumAgeMs: 0, now: 100_000 });
+			assert.deepEqual(reaped.removed, []);
+			assert.ok(fs.existsSync(setup.worktrees[0]!.path));
+		} finally {
+			removeGeneratedWorktrees(repo, setup);
+			fs.rmSync(repo, { recursive: true, force: true });
+			fs.rmSync(baseDir, { recursive: true, force: true });
+		}
+	});
+
 	it("keeps stale markers, pending captures, and inconsistent cleanup metadata non-removable", () => {
 		const repo = createRepo("pi-cleanup-plan-stale-");
 		const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-cleanup-plan-base-"));

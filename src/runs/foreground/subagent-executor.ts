@@ -3527,6 +3527,7 @@ function finalizeSingleWorktreeHandoff(input: {
 	agent: string;
 	result: SingleResult;
 	workflowKey?: string;
+	parentWorkflowRunId?: string;
 	lane?: import("../../shared/types.ts").WorkflowLaneMetadata;
 }): { suffix: string; reference?: NonNullable<Details["parallelHandoff"]> } {
 	const diffsDir = path.join(input.artifactsDir, "worktree-diffs", input.runId);
@@ -3568,7 +3569,12 @@ function finalizeSingleWorktreeHandoff(input: {
 	};
 	try {
 		writeParallelHandoffGroup(handoff);
-		const cleanup = cleanupWorktrees(input.worktreeSetup, { kind: "preserve", capturedDiffs: diffs, handoffManifestPath: manifestPath });
+		const cleanup = cleanupWorktrees(input.worktreeSetup, {
+			kind: "preserve", capturedDiffs: diffs, handoffManifestPath: manifestPath,
+			...(input.parentWorkflowRunId && input.result.sessionFile && fs.existsSync(input.result.sessionFile) && handoff.results[0]?.status !== "stopped"
+				? { cleanupBlocker: "retained child resume requires managed worktree cwd" }
+				: {}),
+		});
 		const reference = writeParallelHandoffGroup({ ...handoff, cleanup });
 		return {
 			suffix: [diffSummary, formatParallelHandoffReference(reference)].filter(Boolean).join("\n\n"),
@@ -3735,14 +3741,17 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		}));
 	}
 
+	let childStopped = false;
 	const forwardSingleUpdate = onUpdate
 		? (update: AgentToolResult<Details>) => {
+			childStopped ||= Boolean(update.details?.results[0] && foregroundResultIntercomStatus(update.details.results[0]) === "stopped");
 			if (foregroundControl) updateForegroundChild(foregroundControl, 0, update.details?.progress?.[0]);
 			onUpdate(update);
 		}
 		: undefined;
 
 	const deadlineAt = data.deadlineAt ?? (data.timeoutMs !== undefined ? Date.now() + data.timeoutMs : undefined);
+	let launchedSessionFile: string | undefined;
 	let r: Awaited<ReturnType<typeof runSync>> | undefined;
 	let resolveDetachedWorkflowChild: ((result: Awaited<ReturnType<typeof runSync>>) => void) | undefined;
 	const detachedWorkflowChild = params.workflowAwaitDetached === true
@@ -3766,7 +3775,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			intercomEvents: deps.pi.events,
 			runId,
 			sessionDir: sessionDirForIndex(0),
-			sessionFile: sessionFileForTask(params.agent!, 0, modelOverride, modelOverrideFromParent, modelOrigin),
+			sessionFile: (launchedSessionFile = sessionFileForTask(params.agent!, 0, modelOverride, modelOverrideFromParent, modelOrigin)),
 			share: shareEnabled,
 			artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
 			artifactConfig,
@@ -3812,7 +3821,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				}
 				try {
 					if (worktreeSetup) {
-						finalizeSingleWorktreeHandoff({ worktreeSetup, artifactsDir, runId, cwd: sourceCwd, agent: params.agent!, result, workflowKey: params.workflowKey, lane });
+						finalizeSingleWorktreeHandoff({ worktreeSetup, artifactsDir, runId, cwd: sourceCwd, agent: params.agent!, result, workflowKey: params.workflowKey, parentWorkflowRunId: params.workflowParentRunId, lane });
 					}
 					try {
 						updateRememberedForegroundChild(deps.state, { runId, mode: "single", cwd: singleCwd, sessionId: data.parentSessionId, index: 0, result, events: deps.pi.events, notify: true });
@@ -3853,7 +3862,12 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		}));
 		r = launched.detached && detachedWorkflowChild ? await detachedWorkflowChild : launched;
 	} catch (error) {
-		if (worktreeSetup) cleanupWorktrees(worktreeSetup);
+		if (worktreeSetup) cleanupWorktrees(worktreeSetup, {
+			kind: "preserve",
+			...(params.workflowParentRunId && launchedSessionFile && fs.existsSync(launchedSessionFile) && !childStopped
+				? { cleanupBlocker: "retained child resume requires managed worktree cwd" }
+				: {}),
+		});
 		throw error;
 	} finally {
 		// An attached runSync rejection still owns its child and structured runtime.
@@ -3872,7 +3886,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	if (worktreeSetup) {
 		worktreeHandoff = r.detached
 			? { suffix: pendingHandoff ? formatParallelHandoffReference(pendingHandoff) : "", reference: pendingHandoff }
-			: finalizeSingleWorktreeHandoff({ worktreeSetup, artifactsDir, runId, cwd: sourceCwd, agent: params.agent!, result: r, workflowKey: params.workflowKey, lane });
+			: finalizeSingleWorktreeHandoff({ worktreeSetup, artifactsDir, runId, cwd: sourceCwd, agent: params.agent!, result: r, workflowKey: params.workflowKey, parentWorkflowRunId: params.workflowParentRunId, lane });
 	}
 
 	if (r.progress) allProgress.push(r.progress);

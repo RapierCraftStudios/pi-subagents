@@ -323,7 +323,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		let revivedIds: string[] = [];
 		try {
 			fs.mkdirSync(sourceAsyncDir, { recursive: true });
-			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: tempDir })}\n`, "utf-8");
 			fs.writeFileSync(path.join(sourceAsyncDir, "status.json"), JSON.stringify({
 				runId: sourceRunId,
 				sessionId: "session-123",
@@ -781,7 +781,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		try {
 			fs.mkdirSync(sourceAsyncDir, { recursive: true });
 			fs.mkdirSync(RESULTS_DIR, { recursive: true });
-			fs.writeFileSync(sourceSession, "", "utf-8");
+			fs.writeFileSync(sourceSession, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: tempDir })}\n`, "utf-8");
 			fs.writeFileSync(path.join(sourceAsyncDir, "status.json"), JSON.stringify({
 				runId: sourceRunId,
 				sessionId: "session-123",
@@ -913,8 +913,8 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		const secondSession = path.join(tempDir, "child-b.jsonl");
 		try {
 			fs.mkdirSync(asyncDir, { recursive: true });
-			fs.writeFileSync(firstSession, "", "utf-8");
-			fs.writeFileSync(secondSession, "", "utf-8");
+			fs.writeFileSync(firstSession, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: tempDir })}\n`, "utf-8");
+			fs.writeFileSync(secondSession, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: tempDir })}\n`, "utf-8");
 			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
 				runId,
 				sessionId: "session-123",
@@ -959,7 +959,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		const sessionFile = path.join(tempDir, "child-session.jsonl");
 		try {
 			fs.mkdirSync(asyncDir, { recursive: true });
-			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: tempDir })}\n`, "utf-8");
 			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
 				runId,
 				sessionId: "session-123",
@@ -1019,7 +1019,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		let revivedId: string | undefined;
 		try {
 			fs.mkdirSync(asyncDir, { recursive: true });
-			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: tempDir })}\n`, "utf-8");
 			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
 				runId,
 				sessionId: "session-123",
@@ -1069,7 +1069,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		let revivedId: string | undefined;
 		try {
 			fs.mkdirSync(asyncDir, { recursive: true });
-			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: tempDir })}\n`, "utf-8");
 			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
 				runId, sessionId: "session-123", mode: "single", state: "paused", startedAt: 100, lastUpdate: 200, cwd: tempDir,
 				steps: [{ agent: "removed-worker", status: "paused", sessionFile }],
@@ -1114,7 +1114,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		const sourceAsyncDir = path.join(ASYNC_DIR, sourceRunId);
 		const sessionFile = path.join(tempDir, "leased-async-child.jsonl");
 		fs.mkdirSync(sourceAsyncDir, { recursive: true });
-		fs.writeFileSync(sessionFile, "", "utf-8");
+		fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: tempDir })}\n`, "utf-8");
 		fs.writeFileSync(path.join(sourceAsyncDir, "status.json"), JSON.stringify({
 			runId: sourceRunId,
 			sessionId: "session-123",
@@ -1180,7 +1180,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		let revivedRunId: string | undefined;
 		try {
 			fs.mkdirSync(sourceAsyncDir, { recursive: true });
-			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: tempDir })}\n`, "utf-8");
 			fs.writeFileSync(path.join(sourceAsyncDir, "status.json"), JSON.stringify({
 				runId: sourceRunId,
 				sessionId: parentSessionId,
@@ -1278,7 +1278,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		const sourceAsyncDir = path.join(ASYNC_DIR, sourceRunId);
 		const sessionFile = path.join(tempDir, "resume-handshake-child.jsonl");
 		fs.mkdirSync(sourceAsyncDir, { recursive: true });
-		fs.writeFileSync(sessionFile, "", "utf-8");
+		fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: tempDir })}\n`, "utf-8");
 		fs.writeFileSync(path.join(sourceAsyncDir, "status.json"), JSON.stringify({
 			runId: sourceRunId,
 			sessionId: parentSessionId,
@@ -1611,7 +1611,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 	it("blocks sibling resume while any remembered foreground child remains detached", async () => {
 		const { executor, state } = makeExecutor({ bridgeMode: "off", agents: [makeAgent("a"), makeAgent("b")] });
 		const siblingSession = path.join(tempDir, "completed-sibling.jsonl");
-		fs.writeFileSync(siblingSession, "", "utf-8");
+		fs.writeFileSync(siblingSession, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: tempDir })}\n`, "utf-8");
 		state.foregroundRuns.set("mixed-detached-run", {
 			runId: "mixed-detached-run",
 			mode: "parallel",
@@ -1702,7 +1702,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 	it("does not inspect or resume remembered foreground runs from another parent session", async () => {
 		const { executor, state } = makeExecutor({ bridgeMode: "off", agents: [makeAgent("a")] });
 		const sessionFile = path.join(tempDir, "other-session-child.jsonl");
-		fs.writeFileSync(sessionFile, "", "utf-8");
+		fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: tempDir })}\n`, "utf-8");
 		state.foregroundRuns.set("other-session-run", {
 			runId: "other-session-run",
 			mode: "single",
@@ -1746,7 +1746,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 	it("resume action keeps exact foreground validation errors over async prefix matches", async () => {
 		const base = `exact-invalid-${Date.now()}`;
 		const asyncSession = path.join(tempDir, "async-exact-prefix.jsonl");
-		fs.writeFileSync(asyncSession, "", "utf-8");
+		fs.writeFileSync(asyncSession, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: tempDir })}\n`, "utf-8");
 		const asyncDir = path.join(ASYNC_DIR, `${base}-async`);
 		try {
 			fs.mkdirSync(asyncDir, { recursive: true });
@@ -1788,7 +1788,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 	it("resume action keeps exact async validation errors over foreground prefix matches", async () => {
 		const base = `exact-invalid-async-${Date.now()}`;
 		const foregroundSession = path.join(tempDir, "foreground-exact-prefix.jsonl");
-		fs.writeFileSync(foregroundSession, "", "utf-8");
+		fs.writeFileSync(foregroundSession, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: tempDir })}\n`, "utf-8");
 		const asyncDir = path.join(ASYNC_DIR, base);
 		try {
 			fs.mkdirSync(asyncDir, { recursive: true });
@@ -1833,9 +1833,9 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		const foregroundSession = path.join(tempDir, "foreground-prefix.jsonl");
 		const firstAsyncSession = path.join(tempDir, "async-a.jsonl");
 		const secondAsyncSession = path.join(tempDir, "async-b.jsonl");
-		fs.writeFileSync(foregroundSession, "", "utf-8");
-		fs.writeFileSync(firstAsyncSession, "", "utf-8");
-		fs.writeFileSync(secondAsyncSession, "", "utf-8");
+		fs.writeFileSync(foregroundSession, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: tempDir })}\n`, "utf-8");
+		fs.writeFileSync(firstAsyncSession, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: tempDir })}\n`, "utf-8");
+		fs.writeFileSync(secondAsyncSession, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: tempDir })}\n`, "utf-8");
 		const firstAsyncDir = path.join(ASYNC_DIR, `${base}-async-a`);
 		const secondAsyncDir = path.join(ASYNC_DIR, `${base}-async-b`);
 		try {
@@ -1885,8 +1885,8 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		const asyncId = `${base}-async`;
 		const foregroundId = `${base}-foreground`;
 		const asyncDir = path.join(ASYNC_DIR, asyncId);
-		fs.writeFileSync(foregroundSession, "", "utf-8");
-		fs.writeFileSync(asyncSession, "", "utf-8");
+		fs.writeFileSync(foregroundSession, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: tempDir })}\n`, "utf-8");
+		fs.writeFileSync(asyncSession, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd: tempDir })}\n`, "utf-8");
 		try {
 			fs.mkdirSync(asyncDir, { recursive: true });
 			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
